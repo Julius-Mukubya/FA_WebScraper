@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Scraper</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2230; --muted:#667085; --line:#e3e6ec; --accent:#2f5bea; --err:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171f; --card:#1d212c; --text:#e8eaf0; --muted:#98a2b3; --line:#2c3242; --accent:#6d8cff; --err:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input[type=text], input[type=number], select {
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:7px;
+    background:var(--bg); color:var(--text); font:inherit; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .row .fit { flex:0 0 auto; }
+  button { padding:9px 16px; border:0; border-radius:7px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.6; cursor:wait; }
+  .modes { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .modes label { margin:0; padding:6px 12px; border:1px solid var(--line); border-radius:999px; cursor:pointer; color:var(--text); }
+  .modes input { display:none; }
+  .modes label:has(input:checked) { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .hint { font-size:13px; color:var(--muted); margin-top:6px; }
+  #custom, #status.err { display:none; }
+  #status { margin:8px 0; color:var(--muted); }
+  #status.err { display:block; color:var(--err); }
+  .tablewrap { overflow:auto; max-height:520px; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; max-width:380px; overflow-wrap:anywhere; }
+  th { position:sticky; top:0; background:var(--card); }
+  .fieldrow { margin-bottom:6px; }
+  details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Web Scraper</h1>
+  <p class="sub">Paste a page link, choose what to pull out, and download the result.</p>
+
+  <div class="card">
+    <label for="url" style="margin-top:0">Page link</label>
+    <div class="row">
+      <input type="text" id="url" placeholder="https://example.com/products">
+      <button class="fit" id="go">Scrape</button>
+    </div>
+
+    <label>What to extract</label>
+    <div class="modes" id="modes">
+      <label><input type="radio" name="mode" value="links" checked>Links</label>
+      <label><input type="radio" name="mode" value="headings">Headings</label>
+      <label><input type="radio" name="mode" value="paragraphs">Paragraphs</label>
+      <label><input type="radio" name="mode" value="images">Images</label>
+      <label><input type="radio" name="mode" value="tables">Tables</label>
+      <label><input type="radio" name="mode" value="custom">Custom selectors</label>
+    </div>
+
+    <div id="custom">
+      <label for="item">Repeating item selector <span>(optional, e.g. <code>article.product</code>)</span></label>
+      <input type="text" id="item" placeholder="article.product">
+      <label>Fields <span>(<code>name=selector</code> or <code>name=selector@attribute</code>)</span></label>
+      <div id="fields"></div>
+      <button class="ghost" id="addField" type="button">+ Add field</button>
+      <p class="hint">Tip: right-click what you want on the page, choose Inspect, and read the tag and class.</p>
+    </div>
+
+    <details>
+      <summary>More options</summary>
+      <div class="row">
+        <div><label for="next">"Next page" link selector</label><input type="text" id="next" placeholder="li.next a"></div>
+        <div><label for="pages">Max pages</label><input type="number" id="pages" value="1" min="1" max="50"></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="insecure"> Skip SSL certificate check (only if you get certificate errors)</label>
+    </details>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="card" id="results" hidden>
+    <div class="row" style="align-items:center;margin-bottom:10px;">
+      <strong id="count"></strong>
+      <span class="fit"><button class="ghost" id="csv">Download CSV</button> <button class="ghost" id="json">Download JSON</button></span>
+    </div>
+    <div class="tablewrap"><table id="table"></table></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let rows = [];
+
+function addField(value = "") {
+  const d = document.createElement("div");
+  d.className = "fieldrow";
+  d.innerHTML = '<input type="text" class="field" placeholder="title=h2 a">';
+  d.firstChild.value = value;
+  $("fields").appendChild(d);
+}
+addField("title=h2 a"); addField("link=h2 a@href");
+$("addField").onclick = () => addField();
+
+document.querySelectorAll("input[name=mode]").forEach(r => r.onchange = () => {
+  $("custom").style.display = r.value === "custom" && r.checked ? "block" : "none";
+});
+
+function setStatus(msg, err = false) {
+  $("status").textContent = msg;
+  $("status").className = err ? "err" : "";
+  $("status").style.display = msg ? "block" : "none";
+}
+
+$("go").onclick = async () => {
+  const url = $("url").value.trim();
+  if (!url) return setStatus("Paste a link first.", true);
+  $("go").disabled = true; $("results").hidden = true;
+  setStatus("Fetching…");
+  try {
+    const res = await fetch("/api/scrape", {
+      method: "POST",
+      body: JSON.stringify({
+        url,
+        mode: document.querySelector("input[name=mode]:checked").value,
+        item: $("item").value,
+        fields: [...document.querySelectorAll(".field")].map(f => f.value),
+        next: $("next").value,
+        pages: $("pages").value,
+        insecure: $("insecure").checked,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    rows = data.rows;
+    render();
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    $("go").disabled = false;
+  }
+};
+$("url").addEventListener("keydown", e => { if (e.key === "Enter") $("go").click(); });
+
+function render() {
+  if (!rows.length) return setStatus("No rows found. Try another mode or check your selectors (JavaScript-rendered pages won't work).", true);
+  setStatus("");
+  const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  const t = $("table");
+  t.innerHTML = "";
+  const head = t.createTHead().insertRow();
+  cols.forEach(c => head.appendChild(Object.assign(document.createElement("th"), { textContent: c })));
+  const body = t.createTBody();
+  rows.forEach(r => {
+    const tr = body.insertRow();
+    cols.forEach(c => tr.insertCell().textContent = r[c] ?? "");
+  });
+  $("count").textContent = `${rows.length} rows`;
+  $("results").hidden = false;
+}
+
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name; a.click();
+}
+$("json").onclick = () => download("scrape.json", JSON.stringify(rows, null, 2), "application/json");
+$("csv").onclick = () => {
+  const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
+  const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [cols.map(q).join(","), ...rows.map(r => cols.map(c => q(r[c])).join(","))].join("\r\n");
+  download("scrape.csv", "﻿" + csv, "text/csv");
+};
+</script>
+</body>
+</html>
